@@ -1,95 +1,67 @@
-from mapping import Ultrasonic_Avoidance
-from picar import front_wheels
-from picar import back_wheels
 import time
-import picar
 import random
-
-force_turning = 0    # 0 = random direction, 1 = force left, 2 = force right, 3 = orderdly
-
-picar.setup()
-
-ua = Ultrasonic_Avoidance.Ultrasonic_Avoidance(20)
-fw = front_wheels.Front_Wheels(db='config')
-bw = back_wheels.Back_Wheels(db='config')
-fw.turning_max = 45
+from picar_4wd import forward, backward, turn_left, turn_right, stop, get_distance_at
 
 forward_speed = 70
 backward_speed = 70
+turn_speed = 70
 
 back_distance = 10
 turn_distance = 20
 
 timeout = 10
-last_angle = 90
-last_dir = 0
-def rand_dir():
-	global last_angle, last_dir
-	if force_turning == 0:
-		_dir = random.randint(0, 1)
-	elif force_turning == 3:
-		_dir = not last_dir
-		last_dir = _dir
-		print('last dir  %s' % last_dir)
-	else:
-		_dir = force_turning - 1
-	angle = (90 - fw.turning_max) + (_dir * 2* fw.turning_max)
-	last_angle = angle
-	return angle
+us_step = 18
+max_angle = 90
+min_angle = -90
+force_turning = 0
 
-def opposite_angle():
-	global last_angle
-	if last_angle < 90:
-		angle = last_angle + 2* fw.turning_max
-	else:
-		angle = last_angle - 2* fw.turning_max
-	last_angle = angle
-	return angle
+def rand_dir():
+    """Determines a random direction to turn based on the force_turning setting."""
+    if force_turning == 0:
+        return random.choice([turn_left, turn_right])
+    elif force_turning == 1:
+        return turn_left
+    elif force_turning == 2:
+        return turn_right
+
+def get_distance():
+    return get_distance_at(0)  # Assuming 0 is the angle facing forward
 
 def start_avoidance():
-	print('start_avoidance')
+    print('Start avoidance')
+    count = 0
+    while True:
+        distance = get_distance()
+        print("Distance: %scm" % distance)
+        if distance > 0:
+            count = 0
+            if distance < back_distance:
+                print("Backward")
+                backward(backward_speed)
+                time.sleep(1)
+                rand_dir()(turn_speed)
+                time.sleep(1)
+            elif distance < turn_distance:
+                print("Turn")
+                rand_dir()(turn_speed)
+                forward(forward_speed)
+                time.sleep(1)
+            else:  # Forward
+                forward(forward_speed)
+        else:
+            stop()
+            if count > timeout:
+                print("Timeout reached, stopping.")
+                break 
+            else:
+                count += 1
+                time.sleep(1)
 
-	count = 0
-	while True:
-		distance = ua.get_distance()
-		print("distance: %scm" % distance)
-		if distance > 0:
-			count = 0
-			if distance < back_distance: # backward
-				print( "backward")
-				fw.turn(opposite_angle())
-				bw.backward()
-				bw.speed = backward_speed
-				time.sleep(1)
-				fw.turn(opposite_angle())
-				bw.forward()
-				time.sleep(1)
-			elif distance < turn_distance: # turn
-				print("turn")
-				fw.turn(rand_dir())
-				bw.forward()
-				bw.speed = forward_speed
-				time.sleep(1)
-			else:
-				fw.turn_straight()
-				bw.forward()
-				bw.speed = forward_speed
-
-		else:						# forward
-			fw.turn_straight()
-			if count > timeout:  # timeout, stop;
-				bw.stop()
-			else:
-				bw.backward()
-				bw.speed = forward_speed
-				count += 1
-
-def stop():
-	bw.stop()
-	fw.turn_straight()
+def stop_car():
+    stop()
 
 if __name__ == '__main__':
-	try:
-		start_avoidance()
-	except KeyboardInterrupt:
-		stop()
+    try:
+        start_avoidance()
+    except KeyboardInterrupt:
+        stop_car()
