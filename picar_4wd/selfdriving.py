@@ -9,6 +9,7 @@ import picar_4wd as fc
 import time
 import argparse
 import threading
+from threading import Thread, Event
 
 import cv2
 from detector import ObjectDetector
@@ -16,8 +17,8 @@ from detector import ObjectDetector
 us = Ultrasonic(Pin('D8'), Pin('D9'))
 servo = Servo(PWM("P0"), offset=0)
 
-side_length = 80
-RES = 20
+side_length = 100
+RES = 15
 
 from pathsolver import AStarPath
 
@@ -42,11 +43,11 @@ class AutoPilot(object):
         dis = []
         for angle in range(-60, 60, 10):
             servo.set_angle(angle)
-            time.sleep(0.3)
+            time.sleep(0.2)
             distance = us.get_distance()
             print(distance)
             # Observations that are too far are tossed
-            if distance != -2 and distance < 50:
+            if distance != -2 and distance < 60:
                 dis.append((angle, distance))
 
         servo.set_angle(0)
@@ -54,7 +55,6 @@ class AutoPilot(object):
         return dis
 
     def set_obstacle(self, obs):
-        # Transform to map coordinates using current position and orientation
         radians = np.deg2rad(obs[0]) + np.deg2rad(self.cur_theta)
         x = round(obs[1] * np.sin(radians) / RES)
         y = round(obs[1] * np.cos(radians) / RES)
@@ -62,7 +62,6 @@ class AutoPilot(object):
         x = x + self.cur_x
         y = y + self.cur_y
 
-        # Set the obstacle in the map with a radius of EPS
         EPS = 2
         for t_y in range(y - EPS, y + EPS + 1):
             for t_x in range(x - EPS, x + EPS + 1):
@@ -79,7 +78,6 @@ class AutoPilot(object):
         return self.map
     
     def forward(self):
-        # Move 15 cm forward
         fc.forward(20)
         time.sleep(0.5)
         fc.stop()
@@ -201,15 +199,6 @@ class CarController:
                     break
             time.sleep(0.1)  # Adjust based on your frame processing rate
 
-if __name__ == "__main__":
-    # Initialize the car controller with appropriate parameters
-    car_controller = CarController(model_path="your_model_path.tflite", camera_id=0, frame_width=640, frame_height=480, num_threads=4, enable_edgetpu=False)
-    try:
-        car_controller.start()
-    except KeyboardInterrupt:
-        print("Stopping...")
-    finally:
-        car_controller.stop()
 
 
 if __name__ == '__main__':
@@ -224,14 +213,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     my_detector = ObjectDetector(args.model, args.cameraId, args.frameWidth, args.frameHeight, args.numThreads, args.enableEdgeTPU)
-
+    my_detector.start()
     # 30, 95
     goal = (side_length // 2 - 100 // RES, side_length // 2 + 225 // RES)
 
     while True:
         obj_list = my_detector.get_latest_seen_objects()
         viz, fps = my_detector.get_latest_prediction_viz()
-        print(viz, fps)
         if viz is not None:
             if fps is not None:
                 print(my_detector.get_latest_seen_objects())
@@ -244,6 +232,15 @@ if __name__ == '__main__':
 
         # If it sees a stop sign, stop
         if 'stop sign' in obj_list:
+            time.sleep(3)
+            continue
+        elif 'person' in obj_list:
+            time.sleep(3)
+            continue
+        elif 'cell phone' in obj_list:
+            time.sleep(3)
+            continue
+        elif 'laptop' in obj_list:
             time.sleep(3)
             continue
         my_pilot.set_surrounding()
@@ -296,3 +293,135 @@ if __name__ == '__main__':
         viz_map = my_pilot.get_map_viz_with_path(path_keys)
         # cv2.imshow('viz', viz_map)
         # cv2.waitKey(1)
+
+
+# from threading import Lock
+
+# class SharedData:
+#     """Class to hold shared data between threads with thread-safe access to detected_objects."""
+#     def __init__(self):
+#         self.stop_signal = Event()
+#         self.detected_objects = []
+#         self.lock = Lock()
+
+#     def add_detected_object(self, obj):
+#         with self.lock:
+#             self.detected_objects.append(obj)
+
+#     def remove_detected_object(self, obj):
+#         with self.lock:
+#             try:
+#                 while obj in self.detected_objects:
+#                     self.detected_objects.remove(obj)
+#             except ValueError:
+#                 pass
+
+#     def get_detected_objects(self):
+#         with self.lock:
+#             return self.detected_objects.copy()
+
+
+# def object_detection_routine(detector, shared_data):
+#     while not shared_data.stop_signal.is_set():
+#         obj_list = detector.get_latest_seen_objects()
+#         viz, fps = detector.get_latest_prediction_viz()
+#         if viz is not None:
+#             if fps is not None:
+#                 print("Detected objects:", obj_list)
+#                 cv2.putText(viz, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+#             cv2.imshow('Object Detector', viz)
+#             if cv2.waitKey(1) & 0xFF == 27:  # ESC key to exit
+#                 shared_data.stop_signal.set()
+#                 break
+#         if 'stop sign' in obj_list:
+#             shared_data.detected_objects = obj_list
+#         if 'person' in obj_list:
+#             shared_data.detected_objects = obj_list
+
+# def navigation_routine(pilot, goal, shared_data):
+#     while not shared_data.stop_signal.is_set():
+#         if 'stop sign' in shared_data.detected_objects:
+#             print("Stop sign detected, pausing navigation.")
+#             time.sleep(3)
+#             shared_data.remove_detected_object('stop sign')
+#         if 'person' in shared_data.detected_objects:
+#             print("Person detected, pausing navigation.")
+#             time.sleep(3)
+#             shared_data.remove_detected_object('person')
+        
+#         pilot.set_surrounding()
+#         cur_x, cur_y, cur_theta = pilot.get_position()
+#         if abs(cur_x - goal[0]) < 1 and abs(cur_y - goal[1]) < 1:
+#             break
+#         path = pilot.get_path((cur_x, cur_y), goal)
+#         path_keys = list(path.keys())
+#         # path_keys = np.array(path_keys)
+
+#         cur_pos, next_pos = path_keys[0], path_keys[1]
+#         if next_pos[0] > cur_pos[0]:
+#             target_theta = 90
+#             assert next_pos[1] == cur_pos[1]
+#         elif next_pos[0] < cur_pos[0]:
+#             target_theta = 270
+#             assert next_pos[1] == cur_pos[1]
+#         elif next_pos[1] > cur_pos[1]:
+#             target_theta = 0
+#             assert next_pos[0] == cur_pos[0]
+#         elif next_pos[1] < cur_pos[1]:
+#             target_theta = 180
+#             assert next_pos[0] == cur_pos[0]
+#         else:
+#             raise Exception("Invalid path")
+        
+#         # Turn if necessary
+#         if cur_theta != target_theta:
+#             # print(path[:2])
+#             print(path_keys[:2])
+#             print(f"tar: {target_theta} cur: {cur_theta}")
+#             if (target_theta - cur_theta) % 360 == 90:
+#                 pilot.turn_left()
+#             elif (target_theta - cur_theta) % 360 == 270:
+#                 pilot.turn_right()
+#             else:
+#                 pilot.turn_right()
+#                 pilot.turn_right()
+        
+#         # Move forward
+#         pilot.forward()
+
+#         cur_x, cur_y, cur_theta = pilot.get_position()
+#         print(f"x: {cur_x} y: {cur_y} t: {cur_theta}")
+#         assert (cur_x, cur_y) == next_pos
+        
+#         time.sleep(1)
+
+# def main():
+#     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+#     parser.add_argument('--model', help='Path of the object detection model.', required=False, default='efficientdet_lite0.tflite')
+#     parser.add_argument('--cameraId', help='Id of camera.', required=False, type=int, default=0)
+#     parser.add_argument('--frameWidth', help='Width of frame to capture from camera.', required=False, type=int, default=640)
+#     parser.add_argument('--frameHeight', help='Height of frame to capture from camera.', required=False, type=int, default=480)
+#     parser.add_argument('--numThreads', help='Number of CPU threads to run the model.', required=False, type=int, default=4)
+#     parser.add_argument('--enableEdgeTPU', help='Whether to run the model on EdgeTPU.', action='store_true', required=False, default=False)
+#     args = parser.parse_args()
+
+#     detector = ObjectDetector(args.model, args.cameraId, args.frameWidth, args.frameHeight, args.numThreads, args.enableEdgeTPU)
+#     detector.start()
+#     pilot = AutoPilot(100, 100)
+#     goal = (50, 50)
+
+#     shared_data = SharedData()
+
+#     # Start the detection thread
+#     detection_thread = Thread(target=object_detection_routine, args=(detector, shared_data))
+#     detection_thread.start()
+
+#     # Start the navigation thread
+#     navigation_thread = Thread(target=navigation_routine, args=(pilot, goal, shared_data))
+#     navigation_thread.start()
+
+#     detection_thread.join()
+#     navigation_thread.join()
+
+# if __name__ == '__main__':
+#     main()
