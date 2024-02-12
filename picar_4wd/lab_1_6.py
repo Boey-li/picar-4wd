@@ -1,110 +1,81 @@
+import numpy as np
+import cv2
+from picar_4wd import forward, backward, turn_left, turn_right, stop, get_distance_at
+import random
 import time
 import math
-import numpy as np
-from picar_4wd.servo import Servo
-from picar_4wd import forward, backward, turn_left, turn_right, stop, get_distance_at
 
-import random
-# servo = Servo()
+# Map and vehicle parameters
+map_size = 100  # Size of the square map (100x100 cm)
+forward_speed = 20 # Speed setting for moving forward
+backward_speed = 20  # Speed setting for moving backward, negative for illustration
+turn_speed = 20  # Speed setting for turning
+obstacle_map = np.zeros((map_size, map_size), dtype=np.uint8)  # Initialize the obstacle map
 
-ANGLE_RANGE = 180
-STEP = 18
-us_step = STEP
-angle_distance = [0,0]
-current_angle = 0
-max_angle = ANGLE_RANGE/2
-min_angle = -ANGLE_RANGE/2
-scan_list = []
+# Distance parameters
+backup_distance = 10  # Distance to back up in cm
+estimated_backup_time = 0.5
 
 def get_distance(angle=0):
+    """Get distance at a given angle using the ultrasonic sensor."""
     return get_distance_at(angle)
 
-
-obstacle_threshold_distance = 30
-def scan_and_update_map():
+def update_map_from_scan(scan_data):
+    """Update the map based on scan data collected at various angles."""
     global obstacle_map
-    scan_data = []
-    for angle in range(-90, 90, STEP):
-        time.sleep(0.5)
+    car_position = (map_size // 2, map_size - 1)
+    for angle, distance in scan_data.items():
+        if distance > 0:
+            obstacle_x = int(car_position[0] + distance * np.cos(np.radians(angle)))
+            obstacle_y = int(car_position[1] - distance * np.sin(np.radians(angle)))  # Inverting y-axis
+            if 0 <= obstacle_x < map_size and 0 <= obstacle_y < map_size:
+                obstacle_map[obstacle_y, obstacle_x] = 1  # Mark the obstacle
+
+def scan_environment():
+    """Scan the environment around the car."""
+    scan_data = {}
+    for angle in range(-60, 61, 30):
         distance = get_distance(angle)
-        if distance > 0:  # Valid distance
-            scan_data.append((angle, distance))
-    for angle, distance in scan_data:
-        if distance < obstacle_threshold_distance:
-            x, y = polar_to_cartesian(angle, distance)
-            if 0 <= x < map_size and 0 <= y < map_size:
-                obstacle_map[x, y] = 1
+        scan_data[angle] = distance
+    return scan_data
 
-def polar_to_cartesian(angle, distance):
-    # Convert from polar to Cartesian coordinates
-    angle_rad = math.radians(angle)
-    x = int(distance * math.cos(angle_rad)) + map_size // 2  # Adjust origin to the center of the map
-    y = int(distance * math.sin(angle_rad)) + map_size // 2
-    return x, y
+def backup_and_turn():
+    """Back up a short distance and then turn in a random direction."""
+    backward(backward_speed)  # Move backward
+    time.sleep(estimated_backup_time)  # Wait for the estimated time to back up
+    stop()  # Stop before turning
 
-# Initialize a 100x100 map
-map_size = 100
-obstacle_map = np.zeros((map_size, map_size))
-obstacle_distance = 30
-
-forward_speed = 30
-backward_speed = 30
-turn_speed = 30
-
-back_distance = 10
-turn_distance = 20
-
-timeout = 10
-us_step = 18
-max_angle = 0
-min_angle = -0
-force_turning = 0
-
-
-
-obstacle_distance = 50
-backward_speed = 30
-turn_speed = 30
-forward_speed = 30
-back_up_time = 1
-turn_time = 1 
-
-def choose_random_direction():
-    return random.choice([turn_left, turn_right])
+    # Randomly choose a direction to turn
+    random.choice([turn_left, turn_right])(turn_speed)
+    time.sleep(1)  # Turn for a fixed period
+    stop()  # Ensure the car stops before proceeding
 
 def start_avoidance_and_mapping():
-    print('Start avoidance and mapping')
+    """Main loop for moving the car and mapping based on detected obstacles."""
+    print('Starting avoidance and mapping')
     while True:
-        distance = get_distance()
+        distance = get_distance(0)  # Distance directly ahead
         print(f"Distance: {distance}cm")
 
-        if distance <= obstacle_threshold_distance:
-            stop()
-            print("Obstacle detected, stopping.")
-            scan_and_update_map()
-            get_distance()
-            print("Map updated, choosing new direction.")
-            random_direction = choose_random_direction()
-            print("Backing up.")
-            backward(backward_speed)
-            time.sleep(back_up_time)
-            stop()  # Ensure the car stops before turning
-            print("Turning.")
-            random_direction(turn_speed)
-            time.sleep(turn_time)
-            stop()  # Ensure the car stops before moving forward
-            print("Moving forward in new direction.")
-            forward(forward_speed)
+        if distance < 40:  # Too close to an obstacle
+            stop()  # Stop the car
+            scan_data = scan_environment()  # Scan the surroundings
+            update_map_from_scan(scan_data)  # Update the obstacle map
+            backup_and_turn()  # Back up and turn
+        elif distance <= 50:
+            stop()  # Stop before deciding the next move
+            scan_data = scan_environment()  # Perform a detailed scan
+            update_map_from_scan(scan_data)  # Update map with new data
+            backup_and_turn()  # Execute backup and turn maneuver
         else:
-            forward(forward_speed)
-        time.sleep(0.5)
-
-def stop_car():
-    stop()
+            forward(forward_speed)  # Move forward if the path is clear
+        time.sleep(0.5)  # Short delay to regulate loop execution
 
 if __name__ == '__main__':
     try:
         start_avoidance_and_mapping()
     finally:
-        stop_car()
-        print('Stopped')
+        stop()  # Ensure the car stops
+        np.save('obstacle_map.npy', obstacle_map)  # Save the numpy map
+        cv2.imwrite('obstacle_map.png', obstacle_map * 255)  # Visualize and save the map
+        print('Mapping completed, car stopped.')

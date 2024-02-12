@@ -1,3 +1,4 @@
 .vscode/*
 *.DS_Store
 picar_4wd/myenv
+picar_4wd/efficientdet_lite0.tflite

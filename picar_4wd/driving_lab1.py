@@ -58,11 +58,11 @@ def get_distance():
 #                 time.sleep(1)
 
 obstacle_distance = 50
-backward_speed = 30
-turn_speed = 30
-forward_speed = 30
+backward_speed = 20
+turn_speed = 20
+forward_speed = 20
 back_up_time = 1
-turn_time = 1 
+turn_time = 2
 
 def choose_random_direction():
     return random.choice([turn_left, turn_right])
